@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../../features/auth/signed_in_customer.dart';
+import '../../features/booking/data/customer_booking_api.dart';
 import '../../features/booking/models/appointment.dart';
 import '../../features/bookings/data/sample_appointments.dart';
 import '../../features/catalog/data/customer_catalogue_api.dart';
@@ -35,25 +36,29 @@ class AppController extends ChangeNotifier {
   bool catalogLoading = false;
   String? catalogError;
   CustomerCatalogueApi? catalogueApi;
+  CustomerBookingApi? bookingApi;
+  bool bookingsLoading = false;
+  String? bookingsError;
 
   bool get notificationsPreview => _notificationsPreview;
 
   List<Appointment> get upcoming => appointments
-      .where((appointment) =>
-          appointment.status == AppointmentStatus.confirmed ||
-          appointment.status == AppointmentStatus.pending)
+      .where((appointment) => !appointment.isHistory())
       .toList()
-    ..sort((a, b) => a.start.compareTo(b.start));
+    ..sort((a, b) => a.applicableDay.compareTo(b.applicableDay));
 
   List<Appointment> get past => appointments
-      .where((appointment) => appointment.status == AppointmentStatus.completed)
+      .where((appointment) => appointment.isHistory())
       .toList()
-    ..sort((a, b) => b.start.compareTo(a.start));
+    ..sort((a, b) => b.applicableDay.compareTo(a.applicableDay));
 
   void setTab(int index) {
     if (tabIndex == index) return;
     tabIndex = index;
     notifyListeners();
+    if (index == AppTab.bookings) {
+      refreshBookings();
+    }
   }
 
   void openExplore({String query = '', String? categoryId}) {
@@ -100,8 +105,58 @@ class AppController extends ChangeNotifier {
 
   void signIn(SignedInCustomer customer) {
     signedIn = customer;
+    appointments.clear();
+    bookingsError = null;
     notifyListeners();
     refreshCatalogue();
+    refreshBookings();
+  }
+
+  Future<void> refreshBookings() async {
+    final token = signedIn?.accessToken;
+    if (token == null || token.isEmpty) return;
+    bookingsLoading = true;
+    bookingsError = null;
+    notifyListeners();
+    try {
+      final rows = await (bookingApi ?? CustomerBookingApi()).list(accessToken: token);
+      appointments
+        ..clear()
+        ..addAll(rows.map((row) => row.toAppointment()));
+      bookingsError = null;
+    } on ApiException catch (error) {
+      bookingsError = error.message;
+    } catch (_) {
+      bookingsError = 'Cannot reach the salon server.';
+    }
+    bookingsLoading = false;
+    notifyListeners();
+  }
+
+  Future<String?> requestCancellation(Appointment appointment) async {
+    final token = signedIn?.accessToken;
+    final id = int.tryParse(appointment.id);
+    if (token == null || id == null) return 'Sign in again to request cancellation.';
+    try {
+      final saved = await (bookingApi ?? CustomerBookingApi()).requestCancellation(
+        accessToken: token,
+        appointmentId: id,
+      );
+      final index = appointments.indexWhere((item) => item.id == appointment.id);
+      final mapped = saved.toAppointment();
+      if (index >= 0) {
+        appointments[index] = mapped;
+      } else {
+        appointments.insert(0, mapped);
+      }
+      notifyListeners();
+      await refreshBookings();
+      return null;
+    } on ApiException catch (error) {
+      return error.message;
+    } catch (_) {
+      return 'Cannot reach the salon server.';
+    }
   }
 
   Future<void> refreshCatalogue() async {
@@ -137,6 +192,11 @@ class AppController extends ChangeNotifier {
     catalog = SalonCatalog.preview;
     catalogLoading = false;
     catalogError = null;
+    bookingsLoading = false;
+    bookingsError = null;
+    appointments
+      ..clear()
+      ..addAll(SampleAppointments.seed());
     notifyListeners();
   }
 

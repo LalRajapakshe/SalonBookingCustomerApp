@@ -21,6 +21,7 @@ import '../../catalog/data/customer_catalogue_api.dart';
 import '../../catalog/data/salon_catalog.dart';
 import '../../catalog/models/salon_service.dart';
 import '../../catalog/models/stylist.dart';
+import '../../../core/time/salon_time.dart';
 import '../data/customer_booking_api.dart';
 import '../data/mock_availability.dart';
 import '../models/appointment.dart';
@@ -112,11 +113,7 @@ class _BookingFlowScreenState extends State<BookingFlowScreen> {
     final day = DateTime(date.year, date.month, date.day);
     setState(() {
       _date = day;
-      if (_time != null && _stylistId != null) {
-        final stillOpen = MockAvailability.slotsFor(date: day, stylistId: _stylistId!)
-            .any((slot) => slot.available && slot.time == _time);
-        if (!stillOpen) _time = null;
-      }
+      _time = null;
     });
   }
 
@@ -170,15 +167,27 @@ class _BookingFlowScreenState extends State<BookingFlowScreen> {
         notes: preferredEmployeeId == null ? 'No stylist preference' : null,
       );
       if (!mounted) return;
-      _openConfirmation(
-        Appointment(
-          id: '$appointmentId',
-          serviceId: service.id,
-          stylistId: _stylistId!,
-          start: start,
-          status: AppointmentStatus.pending,
-          storedOnServer: true,
-        ),
+      final app = AppScope.read(context);
+      await app.refreshBookings();
+      if (!mounted) return;
+      if (!app.appointments.any((item) => item.id == '$appointmentId')) {
+        app.addAppointment(
+          Appointment(
+            id: '$appointmentId',
+            serviceId: service.id,
+            stylistId: _stylistId!,
+            start: start,
+            status: AppointmentStatus.pending,
+            storedOnServer: true,
+            serviceName: service.name,
+            branchName: service.salonId,
+            requestedStart: start,
+          ),
+        );
+      }
+      Navigator.of(context).pushReplacementNamed(
+        AppRoutes.confirmation,
+        arguments: app.appointments.firstWhere((item) => item.id == '$appointmentId'),
       );
     } on ApiException catch (error) {
       if (!mounted) return;
@@ -284,8 +293,14 @@ class _BookingFlowScreenState extends State<BookingFlowScreen> {
                         selectedId: _stylistId,
                         onSelected: _selectStylist,
                       ),
-                    2 => DateSelector(
-                        dates: MockAvailability.upcomingDates(),
+                    2 => _DateStep(
+                        live: _catalog.isLive &&
+                            AppScope.of(context).signedIn != null &&
+                            _service?.numericId != null &&
+                            _service?.numericBranchId != null,
+                        accessToken: AppScope.of(context).signedIn?.accessToken,
+                        service: _service,
+                        stylistId: _stylistId,
                         selected: _date,
                         onSelected: _selectDate,
                       ),
@@ -303,6 +318,7 @@ class _BookingFlowScreenState extends State<BookingFlowScreen> {
                         stylistId: _stylistId,
                         date: _date,
                         time: _time,
+                        live: _catalog.isLive && AppScope.of(context).signedIn != null,
                       ),
                   },
                 ],
@@ -577,10 +593,11 @@ class _TimeStepState extends State<_TimeStep> {
       setState(() {
         _slots = [
           for (final row in rows)
-            TimeSlot(
-              time: TimeOfDay(hour: row.start.hour, minute: row.start.minute),
-              available: row.available,
-            ),
+            if (!SalonTime.isPastSlot(date, row.start.hour, row.start.minute))
+              TimeSlot(
+                time: TimeOfDay(hour: row.start.hour, minute: row.start.minute),
+                available: row.available,
+              ),
         ];
         _loading = false;
       });
@@ -649,18 +666,168 @@ class _TimeStepState extends State<_TimeStep> {
   }
 }
 
+class _DateStep extends StatefulWidget {
+  const _DateStep({
+    required this.live,
+    required this.accessToken,
+    required this.service,
+    required this.stylistId,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final bool live;
+  final String? accessToken;
+  final SalonService? service;
+  final String? stylistId;
+  final DateTime? selected;
+  final ValueChanged<DateTime> onSelected;
+
+  @override
+  State<_DateStep> createState() => _DateStepState();
+}
+
+class _DateStepState extends State<_DateStep> {
+  List<DateTime> _dates = const [];
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _DateStep oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.live != widget.live ||
+        oldWidget.stylistId != widget.stylistId ||
+        oldWidget.service?.id != widget.service?.id) {
+      _load();
+    }
+  }
+
+  Future<void> _load() async {
+    final service = widget.service;
+    if (!widget.live || widget.accessToken == null || service?.numericId == null || service?.numericBranchId == null) {
+      setState(() {
+        _dates = MockAvailability.upcomingDates();
+        _loading = false;
+        _error = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _error = null;
+      _dates = const [];
+    });
+    final start = SalonTime.today();
+    final employeeId = widget.stylistId == null || widget.stylistId == SalonCatalog.anyStylistId
+        ? null
+        : int.tryParse(widget.stylistId!);
+    try {
+      final api = AppScope.read(context).catalogueApi ?? CustomerCatalogueApi();
+      final checks = await Future.wait([
+        for (var index = 0; index < 14; index++)
+          api.availability(
+            accessToken: widget.accessToken!,
+            branchId: service!.numericBranchId!,
+            serviceId: service.numericId!,
+            date: start.add(Duration(days: index)),
+            employeeId: employeeId,
+          ),
+      ]);
+      if (!mounted) return;
+      final open = <DateTime>[];
+      for (var index = 0; index < checks.length; index++) {
+        if (checks[index].any((slot) => slot.available)) {
+          open.add(start.add(Duration(days: index)));
+        }
+      }
+      setState(() {
+        _dates = open;
+        _loading = false;
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = error.message;
+        _dates = const [];
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'Cannot reach the salon server.';
+        _dates = const [];
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 32),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_error != null) {
+      return EmptyState(
+        icon: Icons.cloud_off_rounded,
+        title: 'Dates are unavailable',
+        message: _error!,
+        actionLabel: 'Try again',
+        onAction: _load,
+      );
+    }
+    if (widget.live && _dates.isEmpty) {
+      return const EmptyState(
+        icon: Icons.event_busy_rounded,
+        title: 'No open days',
+        message: 'The salon has no available time in the next two weeks for this service.',
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(widget.live ? 'Open days' : 'Sample dates', style: AppTextStyles.cardTitle),
+        const SizedBox(height: 6),
+        Text(
+          widget.live
+              ? 'These days come from the salon calendar. A time you choose is a request, not a reserved slot.'
+              : 'These dates are sample preview data, not the salon calendar.',
+          style: AppTextStyles.caption,
+        ),
+        const SizedBox(height: 16),
+        DateSelector(
+          dates: _dates,
+          selected: widget.selected,
+          onSelected: widget.onSelected,
+        ),
+      ],
+    );
+  }
+}
+
 class _ReviewStep extends StatelessWidget {
   const _ReviewStep({
     required this.service,
     required this.stylistId,
     required this.date,
     required this.time,
+    required this.live,
   });
 
   final SalonService? service;
   final String? stylistId;
   final DateTime? date;
   final TimeOfDay? time;
+  final bool live;
 
   @override
   Widget build(BuildContext context) {
@@ -676,7 +843,9 @@ class _ReviewStep extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Confirming saves this visit in the current session.',
+          live
+              ? 'Confirming sends a booking request. The salon confirms the time afterwards.'
+              : 'Confirming saves this sample visit in the current session.',
           style: AppTextStyles.body,
         ),
         const SizedBox(height: 14),

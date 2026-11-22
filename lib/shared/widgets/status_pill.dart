@@ -11,17 +11,19 @@ class StatusPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final completed = status == AppointmentStatus.completed;
+    final closed = status == AppointmentStatus.completed ||
+        status == AppointmentStatus.cancelled ||
+        status == AppointmentStatus.noShow;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: completed ? const Color(0xFFEDE9FE) : AppColors.successSurface,
+        color: closed ? const Color(0xFFEDE9FE) : AppColors.successSurface,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
         status.label,
         style: AppTextStyles.caption.copyWith(
-          color: completed ? AppColors.purple : AppColors.success,
+          color: closed ? AppColors.purple : AppColors.success,
           fontWeight: FontWeight.w800,
         ),
       ),

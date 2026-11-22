@@ -16,6 +16,7 @@ class SampleAppointments {
         stylistId: 'stylist-noah',
         start: DateTime(past.year, past.month, past.day, 15, 30),
         status: AppointmentStatus.completed,
+        sample: true,
       ),
     ];
   }

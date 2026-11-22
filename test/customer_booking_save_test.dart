@@ -23,7 +23,10 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    final controller = AppController()..catalogueApi = _ScriptedCatalogue();
+    final booking = _ScriptedBooking();
+    final controller = AppController()
+      ..catalogueApi = _ScriptedCatalogue()
+      ..bookingApi = booking;
     controller.signIn(
       SignedInCustomer(
         accessToken: 'token',
@@ -33,8 +36,6 @@ void main() {
         customerId: 4,
       ),
     );
-    final booking = _ScriptedBooking();
-
     await tester.pumpWidget(
       AppScope(
         controller: controller,
@@ -73,6 +74,24 @@ void main() {
 
 class _ScriptedBooking extends CustomerBookingApi {
   int? createdServiceId;
+
+  @override
+  Future<List<CustomerAppointmentRecord>> list({required String accessToken}) async {
+    if (createdServiceId == null) return const [];
+    return [
+      CustomerAppointmentRecord(
+        appointmentId: 88,
+        branchName: 'Studio',
+        serviceId: 15,
+        serviceName: 'Signature Blowout',
+        appointmentDate: DateTime(2026, 11, 21),
+        preferredStartTime: DateTime(2026, 11, 21, 10),
+        status: 'Pending',
+        cancellationRequest: 'None',
+        createdDate: DateTime(2026, 11, 21),
+      ),
+    ];
+  }
 
   @override
   Future<List<BookableService>> services({required String accessToken}) async {
