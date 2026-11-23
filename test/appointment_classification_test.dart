@@ -31,7 +31,14 @@ void main() {
 
   test('upcoming and past follow the salon date and keep cancelled distinct', () {
     final futurePending = visit(start: DateTime(2026, 11, 25, 10), status: AppointmentStatus.pending);
-    final futureConfirmed = visit(start: DateTime(2026, 11, 26, 11), status: AppointmentStatus.confirmed);
+    final futureConfirmed = visit(
+      start: DateTime(2026, 11, 26, 10),
+      status: AppointmentStatus.confirmed,
+      requested: DateTime(2026, 11, 26, 10),
+      scheduled: DateTime(2026, 11, 26, 11),
+    );
+    expect(futureConfirmed.status.label, 'Confirmed');
+    expect(futureConfirmed.requestedStart, isNot(futureConfirmed.scheduledStart));
     final pastConfirmed = visit(start: DateTime(2026, 11, 20, 9), status: AppointmentStatus.confirmed);
     final futureCancelled = visit(start: DateTime(2026, 11, 28, 9), status: AppointmentStatus.cancelled);
     final completed = visit(start: DateTime(2026, 11, 18, 9), status: AppointmentStatus.completed);
