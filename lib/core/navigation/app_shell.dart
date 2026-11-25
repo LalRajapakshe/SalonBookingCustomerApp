@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../features/bookings/screens/my_bookings_screen.dart';
 import '../../features/explore/screens/explore_screen.dart';
+import '../../features/feedback/screens/feedback_gate.dart';
 import '../../features/home/screens/customer_home_screen.dart';
 import '../../features/profile/screens/profile_screen.dart';
 import '../state/app_controller.dart';
@@ -22,7 +23,7 @@ class AppShell extends StatelessWidget {
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
-      body: body,
+      body: FeedbackGate(child: body),
       bottomNavigationBar: NavigationBar(
         selectedIndex: app.tabIndex,
         onDestinationSelected: app.setTab,

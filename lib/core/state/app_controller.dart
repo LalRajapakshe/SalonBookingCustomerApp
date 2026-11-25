@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../../features/auth/customer_session_store.dart';
 import '../../features/auth/signed_in_customer.dart';
 import '../../features/booking/data/customer_booking_api.dart';
 import '../../features/booking/models/appointment.dart';
@@ -19,11 +20,16 @@ class AppTab {
 
 /// Session state for tabs, discovery filters, and locally confirmed visits.
 class AppController extends ChangeNotifier {
-  AppController({List<Appointment>? appointments, bool notificationsPreview = true})
-      : appointments = List<Appointment>.of(
+  AppController({
+    List<Appointment>? appointments,
+    bool notificationsPreview = true,
+    this.sessionStore,
+  })  : appointments = List<Appointment>.of(
           appointments ?? SampleAppointments.seed(),
         ),
         _notificationsPreview = notificationsPreview;
+
+  final CustomerSessionStore? sessionStore;
 
   final List<Appointment> appointments;
 
@@ -108,8 +114,21 @@ class AppController extends ChangeNotifier {
     appointments.clear();
     bookingsError = null;
     notifyListeners();
+    sessionStore?.write(customer);
     refreshCatalogue();
     refreshBookings();
+  }
+
+  Future<void> restoreSession() async {
+    final store = sessionStore;
+    if (store == null || signedIn != null) return;
+    final saved = await store.read();
+    if (saved == null) return;
+    if (!saved.expiresAt.isAfter(DateTime.now())) {
+      await store.clear();
+      return;
+    }
+    signIn(saved);
   }
 
   Future<void> refreshBookings() async {
@@ -125,6 +144,10 @@ class AppController extends ChangeNotifier {
         ..addAll(rows.map((row) => row.toAppointment()));
       bookingsError = null;
     } on ApiException catch (error) {
+      if (error.statusCode == 401 && signedIn?.accessToken == token) {
+        signOut();
+        return;
+      }
       bookingsError = error.message;
     } catch (_) {
       bookingsError = 'Cannot reach the salon server.';
@@ -175,10 +198,12 @@ class AppController extends ChangeNotifier {
       catalog = await (catalogueApi ?? CustomerCatalogueApi()).load(token);
       catalogError = null;
     } on ApiException catch (error) {
+      if (error.statusCode == 401 && signedIn?.accessToken == token) {
+        signOut();
+        return;
+      }
       catalog = SalonCatalog.emptyLive;
-      catalogError = error.statusCode == 401
-          ? 'Sign in again to load the salon catalogue.'
-          : error.message;
+      catalogError = error.message;
     } catch (_) {
       catalog = SalonCatalog.emptyLive;
       catalogError = 'Cannot reach the salon server.';
@@ -188,6 +213,7 @@ class AppController extends ChangeNotifier {
   }
 
   void signOut() {
+    sessionStore?.clear();
     signedIn = null;
     catalog = SalonCatalog.preview;
     catalogLoading = false;

@@ -10,6 +10,7 @@ import 'features/ai_hair_studio/state/hair_studio_bindings.dart';
 import 'features/ai_hair_studio/state/hair_studio_scope.dart';
 import 'features/beauty_inspiration/state/wishlist_controller.dart';
 import 'features/beauty_inspiration/state/wishlist_scope.dart';
+import 'features/auth/customer_session_store.dart';
 import 'features/auth/login_screen.dart';
 import 'features/smart_booking_calendar/state/calendar_controller.dart';
 import 'features/smart_booking_calendar/state/calendar_scope.dart';
@@ -18,12 +19,14 @@ import 'core/navigation/app_shell.dart';
 class SalonCustomerApp extends StatefulWidget {
   const SalonCustomerApp({
     this.controller,
+    this.sessionStore,
     this.hairStudio,
     this.requireLogin = true,
     super.key,
   });
 
   final AppController? controller;
+  final CustomerSessionStore? sessionStore;
   final HairStudioBindings? hairStudio;
 
   /// The running app opens on sign-in. Tests can skip that gate.
@@ -34,13 +37,30 @@ class SalonCustomerApp extends StatefulWidget {
 }
 
 class _SalonCustomerAppState extends State<SalonCustomerApp> {
-  late final AppController _controller = widget.controller ?? AppController();
+  late final AppController _controller = widget.controller ?? AppController(sessionStore: widget.sessionStore);
   late final bool _ownsController = widget.controller == null;
+  late bool _restoring = widget.controller == null && widget.sessionStore != null;
   late final HairStudioBindings _hairStudio =
       widget.hairStudio ?? HairStudioBindings.production();
   late final bool _ownsHairStudio = widget.hairStudio == null;
   late final WishlistController _wishlist = WishlistController();
   late final CalendarController _calendar = CalendarController();
+
+  @override
+  void initState() {
+    super.initState();
+    _restore();
+  }
+
+  Future<void> _restore() async {
+    if (!_restoring) return;
+    try {
+      await _controller.restoreSession();
+    } catch (_) {
+      await widget.sessionStore?.clear();
+    }
+    if (mounted) setState(() => _restoring = false);
+  }
 
   @override
   void dispose() {
@@ -63,7 +83,9 @@ class _SalonCustomerAppState extends State<SalonCustomerApp> {
         debugShowCheckedModeBanner: false,
         title: 'Lumière',
         theme: AppTheme.light,
-        home: _StartGate(requireLogin: widget.requireLogin),
+        home: _restoring
+            ? const Scaffold(body: Center(child: CircularProgressIndicator()))
+            : _StartGate(requireLogin: widget.requireLogin),
         onGenerateRoute: AppNavigation.onGenerateRoute,
         builder: (context, child) {
           return WishlistScope(
